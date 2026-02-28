@@ -1,0 +1,66 @@
+//! Calculator RPC client.
+//!
+//! Run the server first: cargo run --example calculator_server
+//! Then run: cargo run --example calculator_client
+
+use mill_io::EventLoop;
+use mill_rpc::prelude::*;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+#[mill_rpc::service]
+trait Calculator {
+    fn add(a: i32, b: i32) -> i32;
+    fn subtract(a: i32, b: i32) -> i32;
+    fn multiply(a: i64, b: i64) -> i64;
+    fn divide(a: f64, b: f64) -> f64;
+    fn negate(x: i32) -> i32;
+}
+
+fn main() {
+    env_logger::init();
+    let event_loop = Arc::new(EventLoop::new(2, 1024, 100).unwrap());
+
+    // Run event loop in background
+    let el = event_loop.clone();
+    let handle = thread::spawn(move || {
+        el.run().unwrap();
+    });
+
+    // Give event loop a moment to start
+    thread::sleep(Duration::from_millis(50));
+
+    let addr = "127.0.0.1:9001".parse().unwrap();
+    let transport = mill_rpc::RpcClient::connect(addr, &event_loop, Codec::bincode())
+        .expect("Failed to connect to calculator server");
+
+    let client = CalculatorClient::new(transport, Codec::bincode(), 0);
+
+    println!("Connected to calculator server");
+
+    // Basic arithmetic
+    let sum = client.add(10, 25).unwrap();
+    println!("10 + 25 = {}", sum);
+
+    let diff = client.subtract(100, 42).unwrap();
+    println!("100 - 42 = {}", diff);
+
+    let product = client.multiply(7, 8).unwrap();
+    println!("7 * 8 = {}", product);
+
+    let quotient = client.divide(355.0, 113.0).unwrap();
+    println!("355 / 113 = {:.6}", quotient);
+
+    let neg = client.negate(42).unwrap();
+    println!("negate(42) = {}", neg);
+
+    // Division by zero
+    let nan = client.divide(1.0, 0.0).unwrap();
+    println!("1.0 / 0.0 = {} (NaN: {})", nan, nan.is_nan());
+
+    println!("\nAll calculations completed!");
+
+    event_loop.stop();
+    let _ = handle.join();
+}
