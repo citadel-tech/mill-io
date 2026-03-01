@@ -40,10 +40,7 @@ pub struct RpcClient {
 
 impl RpcClient {
     /// Connect to an RPC server.
-    pub fn connect(
-        addr: SocketAddr,
-        event_loop: &Arc<EventLoop>,
-    ) -> Result<Arc<Self>, RpcError> {
+    pub fn connect(addr: SocketAddr, event_loop: &Arc<EventLoop>) -> Result<Arc<Self>, RpcError> {
         let shared = Arc::new(ClientShared {
             pending: Mutex::new(HashMap::new()),
             notify: Condvar::new(),

@@ -49,7 +49,9 @@ fn main() {
         .expect("Failed to start server");
 
     let sel = server_el.clone();
-    let server_thread = thread::spawn(move || { sel.run().unwrap(); });
+    let server_thread = thread::spawn(move || {
+        sel.run().unwrap();
+    });
     thread::sleep(Duration::from_millis(100));
 
     println!(
@@ -64,7 +66,9 @@ fn main() {
         let handle = thread::spawn(move || {
             let client_el = Arc::new(EventLoop::new(1, 256, 50).unwrap());
             let cel = client_el.clone();
-            let el_thread = thread::spawn(move || { cel.run().unwrap(); });
+            let el_thread = thread::spawn(move || {
+                cel.run().unwrap();
+            });
             thread::sleep(Duration::from_millis(20));
 
             let transport = RpcClient::connect(addr, &client_el).unwrap();
@@ -103,7 +107,10 @@ fn main() {
     println!("Total requests: {}", total);
     println!("Unique values:  {}", all.len());
     println!("Time:           {:?}", elapsed);
-    println!("Throughput:     {:.0} req/s", total as f64 / elapsed.as_secs_f64());
+    println!(
+        "Throughput:     {:.0} req/s",
+        total as f64 / elapsed.as_secs_f64()
+    );
 
     assert_eq!(all.len(), total, "No lost updates");
     println!("\nConcurrency test passed!");

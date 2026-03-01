@@ -39,8 +39,7 @@ fn main() {
     thread::sleep(Duration::from_millis(50));
 
     let addr = "127.0.0.1:9004".parse().unwrap();
-    let transport = RpcClient::connect(addr, &event_loop)
-        .expect("Failed to connect");
+    let transport = RpcClient::connect(addr, &event_loop).expect("Failed to connect");
 
     let math = math_service::Client::new(transport.clone(), Codec::bincode(), 0);
     let strings = string_service::Client::new(transport, Codec::bincode(), 1);

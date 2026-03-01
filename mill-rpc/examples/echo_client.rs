@@ -30,8 +30,8 @@ fn main() {
     thread::sleep(Duration::from_millis(50));
 
     let addr = "127.0.0.1:9002".parse().unwrap();
-    let transport = RpcClient::connect(addr, &event_loop)
-        .expect("Failed to connect to echo server");
+    let transport =
+        RpcClient::connect(addr, &event_loop).expect("Failed to connect to echo server");
 
     let client = echo::Client::new(transport, Codec::bincode(), 0);
 

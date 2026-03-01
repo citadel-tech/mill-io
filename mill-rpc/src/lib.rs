@@ -33,8 +33,7 @@ pub mod prelude;
 
 // Re-exports from core
 pub use mill_rpc_core::{
-    Codec, CodecType, Frame, Flags, FrameHeader, MessageType,
-    RpcContext, RpcError, RpcStatus,
+    Codec, CodecType, Flags, Frame, FrameHeader, MessageType, RpcContext, RpcError, RpcStatus,
     RpcTransport, ServiceDispatch,
 };
 
