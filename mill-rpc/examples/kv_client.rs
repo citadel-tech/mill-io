@@ -17,6 +17,7 @@ mill_rpc::service! {
         fn delete(key: String) -> bool;
         fn keys() -> Vec<String>;
         fn len() -> u64;
+        fn is_empty() -> bool;
         fn clear() -> u64;
     }
 }

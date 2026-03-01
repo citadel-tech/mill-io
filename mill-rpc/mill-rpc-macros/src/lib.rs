@@ -227,8 +227,7 @@ fn generate_service_module(def: ServiceDef) -> syn::Result<proc_macro2::TokenStr
         let dispatch_arms: Vec<_> = def
             .methods
             .iter()
-            .enumerate()
-            .map(|(idx, m)| {
+            .map(|m| {
                 let name = &m.name;
                 let const_name = format_ident!("{}", m.name.to_string().to_uppercase());
                 let req_name = format_ident!("{}Request", to_pascal_case(&m.name.to_string()));

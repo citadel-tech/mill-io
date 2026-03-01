@@ -16,6 +16,7 @@ mill_rpc::service! {
         fn delete(key: String) -> bool;
         fn keys() -> Vec<String>;
         fn len() -> u64;
+        fn is_empty() -> bool;
         fn clear() -> u64;
     }
 }
@@ -66,6 +67,10 @@ impl key_value::Service for KvStore {
         let len = data.len() as u64;
         println!("  LEN -> {}", len);
         len
+    }
+
+    fn is_empty(&self, _ctx: &RpcContext) -> bool {
+        self.data.read().unwrap().is_empty()
     }
 
     fn clear(&self, _ctx: &RpcContext) -> u64 {
