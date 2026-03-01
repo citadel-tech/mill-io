@@ -1,8 +1,5 @@
 //! In-memory key-value store RPC server.
 //!
-//! Demonstrates shared mutable state (HashMap behind RwLock) accessed
-//! concurrently from the thread pool.
-//!
 //! Run with: cargo run --example kv_server
 //! Then connect with: cargo run --example kv_client
 
@@ -11,16 +8,16 @@ use mill_rpc::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-/// We use Option<String> to represent "key not found" as None.
-/// In a real app you'd use Result or a custom enum with #[derive(RpcError)].
-#[mill_rpc::service]
-trait KeyValue {
-    fn get(key: String) -> Option<String>;
-    fn set(key: String, value: String) -> Option<String>;
-    fn delete(key: String) -> bool;
-    fn keys() -> Vec<String>;
-    fn len() -> u64;
-    fn clear() -> u64;
+mill_rpc::service! {
+    #[server]
+    service KeyValue {
+        fn get(key: String) -> Option<String>;
+        fn set(key: String, value: String) -> Option<String>;
+        fn delete(key: String) -> bool;
+        fn keys() -> Vec<String>;
+        fn len() -> u64;
+        fn clear() -> u64;
+    }
 }
 
 struct KvStore {
@@ -35,7 +32,7 @@ impl KvStore {
     }
 }
 
-impl KeyValueServer for KvStore {
+impl key_value::Service for KvStore {
     fn get(&self, _ctx: &RpcContext, key: String) -> Option<String> {
         let data = self.data.read().unwrap();
         let result = data.get(&key).cloned();
@@ -87,11 +84,10 @@ fn main() {
     let addr = "127.0.0.1:9003".parse().unwrap();
     let _server = RpcServer::builder()
         .bind(addr)
-        .service(KeyValueDispatcher(KvStore::new()))
+        .service(key_value::server(KvStore::new()))
         .build(&event_loop)
         .expect("Failed to start KV server");
 
     println!("Key-Value server listening on {}", addr);
-    println!("Supports: GET, SET, DEL, KEYS, LEN, CLEAR");
     event_loop.run().unwrap();
 }

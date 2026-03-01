@@ -9,12 +9,14 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-#[mill_rpc::service]
-trait Echo {
-    fn echo(message: String) -> String;
-    fn echo_uppercase(message: String) -> String;
-    fn echo_repeat(message: String, times: u32) -> String;
-    fn request_count() -> u64;
+mill_rpc::service! {
+    #[client]
+    service Echo {
+        fn echo(message: String) -> String;
+        fn echo_uppercase(message: String) -> String;
+        fn echo_repeat(message: String, times: u32) -> String;
+        fn request_count() -> u64;
+    }
 }
 
 fn main() {
@@ -28,10 +30,10 @@ fn main() {
     thread::sleep(Duration::from_millis(50));
 
     let addr = "127.0.0.1:9002".parse().unwrap();
-    let transport = mill_rpc::RpcClient::connect(addr, &event_loop, Codec::bincode())
+    let transport = RpcClient::connect(addr, &event_loop)
         .expect("Failed to connect to echo server");
 
-    let client = EchoClient::new(transport, Codec::bincode(), 0);
+    let client = echo::Client::new(transport, Codec::bincode(), 0);
 
     // Basic echo
     let reply = client.echo("Hello, Mill-RPC!".into()).unwrap();

@@ -1,193 +1,137 @@
 # mill-rpc
 
-An RPC framework built on top of [`mill-io`](../mill-io) and [`mill-net`](../mill-net). Define services as Rust traits, get type-safe clients and servers for free - no async runtime required.
+An RPC framework built on [`mill-io`](../mill-io) and [`mill-net`](../mill-net). Define services declaratively, get type-safe clients and servers — no async runtime required.
 
 ## Features
 
-- **Zero async** - Handlers are plain synchronous functions, no `async/await` needed
-- **Macro-driven** - `#[mill_rpc::service]` generates server traits, client structs, and dispatch logic from a single trait definition
-- **Type-safe** - Compile-time checked request/response types and method signatures
-- **Multi-service** - Host multiple services on a single server with automatic routing
-- **Pluggable codecs** - Bincode by default, extensible to JSON, MessagePack, CBOR, etc.
-- **Binary wire protocol** - Efficient framing with support for one-way calls, ping/pong, and request cancellation
-
-## Installation
-
-```toml
-[dependencies]
-mill-rpc = { path = "../mill-rpc" }
-```
+- **Zero async**: Handlers are plain synchronous functions
+- **Macro-driven**: `mill_rpc::service!` generates a module with server trait, client struct, and dispatch logic
+- **Selective generation**: Use `#[server]`, `#[client]`, or both (default)
+- **Multi-service**: Host multiple services on a single port with automatic routing
+- **Pluggable codecs**: Bincode by default, extensible
+- **Binary wire protocol**: Efficient framing with one-way calls and ping/pong
 
 ## Quick Start
 
-### 1. Define a service
+### Define a service
 
 ```rust
-use mill_rpc::prelude::*;
-
-#[mill_rpc::service]
-trait Calculator {
-    fn add(a: i32, b: i32) -> i32;
-    fn multiply(a: i64, b: i64) -> i64;
-}
-```
-
-This single trait generates:
-- `CalculatorServer` - trait you implement on the server
-- `CalculatorClient` - struct with typed RPC methods
-- `CalculatorDispatcher` - wrapper that implements `ServiceDispatch`
-- Per-method request/response types with serde derives
-- `calculator_methods` module with method ID constants
-
-### 2. Implement the server
-
-```rust
-struct MyCalculator;
-
-impl CalculatorServer for MyCalculator {
-    fn add(&self, _ctx: &RpcContext, a: i32, b: i32) -> i32 {
-        a + b
-    }
-
-    fn multiply(&self, _ctx: &RpcContext, a: i64, b: i64) -> i64 {
-        a * b
+mill_rpc::service! {
+    service Calculator {
+        fn add(a: i32, b: i32) -> i32;
+        fn multiply(a: i64, b: i64) -> i64;
     }
 }
 ```
 
-### 3. Start the server
+This generates a `calculator` module containing:
+- `calculator::Service`: trait to implement on the server
+- `calculator::server(impl)`: wraps your impl for registration
+- `calculator::Client`: struct with typed RPC methods
+- `calculator::methods`: method ID constants
+
+### Server
 
 ```rust
-use mill_io::EventLoop;
-use std::sync::Arc;
+struct MyCalc;
+
+impl calculator::Service for MyCalc {
+    fn add(&self, _ctx: &RpcContext, a: i32, b: i32) -> i32 { a + b }
+    fn multiply(&self, _ctx: &RpcContext, a: i64, b: i64) -> i64 { a * b }
+}
 
 fn main() {
     let event_loop = Arc::new(EventLoop::new(4, 1024, 100).unwrap());
 
     let _server = RpcServer::builder()
         .bind("127.0.0.1:9001".parse().unwrap())
-        .service(CalculatorDispatcher(MyCalculator))
+        .service(calculator::server(MyCalc))
         .build(&event_loop)
-        .expect("Failed to start server");
+        .unwrap();
 
     event_loop.run().unwrap();
 }
 ```
 
-### 4. Call from a client
+### Client
 
 ```rust
-use mill_io::EventLoop;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+let transport = RpcClient::connect(addr, &event_loop, Codec::bincode()).unwrap();
+let client = calculator::Client::new(transport, Codec::bincode(), 0);
 
-fn main() {
-    let event_loop = Arc::new(EventLoop::new(2, 1024, 100).unwrap());
+let sum = client.add(10, 25).unwrap();     // 35
+let prod = client.multiply(7, 8).unwrap(); // 56
+```
 
-    // Run event loop in background
-    let el = event_loop.clone();
-    thread::spawn(move || el.run().unwrap());
-    thread::sleep(Duration::from_millis(50));
+## Selective Generation
 
-    let transport = mill_rpc::RpcClient::connect(
-        "127.0.0.1:9001".parse().unwrap(),
-        &event_loop,
-        Codec::bincode(),
-    ).unwrap();
+Generate only what you need:
 
-    let client = CalculatorClient::new(transport, Codec::bincode(), 0);
+```rust
+// Server crate: no client code generated
+mill_rpc::service! {
+    #[server]
+    service Calculator {
+        fn add(a: i32, b: i32) -> i32;
+    }
+}
 
-    let sum = client.add(10, 25).unwrap();
-    println!("10 + 25 = {}", sum); // 35
+// Client crate: no server code generated
+mill_rpc::service! {
+    #[client]
+    service Calculator {
+        fn add(a: i32, b: i32) -> i32;
+    }
+}
 
-    let product = client.multiply(7, 8).unwrap();
-    println!("7 * 8 = {}", product); // 56
-
-    event_loop.stop();
+// Both (default): for tests, examples, or single-binary apps
+mill_rpc::service! {
+    service Calculator {
+        fn add(a: i32, b: i32) -> i32;
+    }
 }
 ```
 
 ## Multi-Service Server
 
-Register multiple services on a single port. Each service gets an auto-assigned service ID.
-
 ```rust
-#[mill_rpc::service]
-trait MathService {
-    fn factorial(n: u64) -> u64;
+mill_rpc::service! {
+    #[server]
+    service MathService {
+        fn factorial(n: u64) -> u64;
+    }
 }
 
-#[mill_rpc::service]
-trait StringService {
-    fn reverse(s: String) -> String;
+mill_rpc::service! {
+    #[server]
+    service StringService {
+        fn reverse(s: String) -> String;
+    }
 }
 
-// Server
 let _server = RpcServer::builder()
     .bind(addr)
-    .service(MathServiceDispatcher(MathImpl))       // service_id = 0
-    .service(StringServiceDispatcher(StringImpl))    // service_id = 1
+    .service(math_service::server(MathImpl))       // service_id = 0
+    .service(string_service::server(StringImpl))    // service_id = 1
     .build(&event_loop)?;
 
-// Client - both share a single TCP connection
-let math = MathServiceClient::new(transport.clone(), Codec::bincode(), 0);
-let strings = StringServiceClient::new(transport, Codec::bincode(), 1);
-
-math.factorial(10)?;           // 3628800
-strings.reverse("hello")?;    // "olleh"
+// Client side: share one connection
+let math = math_service::Client::new(transport.clone(), codec, 0);
+let strings = string_service::Client::new(transport, codec, 1);
 ```
-
-## Wire Protocol
-
-Mill-RPC uses a compact binary frame format:
-
-```text
-+--------+--------+-------+--------+-----------+---------+
-| Magic  | Version| Flags | MsgType| PayloadLen| Payload |
-| 2B     | 1B     | 1B    | 1B     | 4B (LE)   | N bytes |
-+--------+--------+-------+--------+-----------+---------+
-```
-
-Request payloads carry routing info:
-
-```text
-+------------+-----------+-----------+---------+
-| RequestID  | ServiceID | MethodID  | Args    |
-| 8B (LE)    | 2B (LE)   | 2B (LE)   | N bytes |
-+------------+-----------+-----------+---------+
-```
-
-**Message types:** Request, Response, Error, Ping, Pong, Cancel
-
-**Flags:** Compressed payload, One-way (fire-and-forget)
 
 ## Examples
 
-Run any example pair (server first, then client):
-
 ```bash
-# Terminal 1
-cargo run --example calculator_server
+# Terminal 1                              # Terminal 2
+cargo run --example calculator_server     cargo run --example calculator_client
+cargo run --example echo_server           cargo run --example echo_client
+cargo run --example kv_server             cargo run --example kv_client
+cargo run --example multi_service_server  cargo run --example multi_service_client
 
-# Terminal 2
-cargo run --example calculator_client
+# Self-contained stress test
+cargo run --example concurrent_clients
 ```
-
-you will find all examples [here](./examples/).
-
-## Error Handling
-
-Mill-RPC uses structured errors with gRPC-style status codes:
-
-| Code | Status            | Description                 |
-| ---- | ----------------- | --------------------------- |
-| 0    | OK                | Success                     |
-| 2    | INVALID_ARGUMENT  | Bad request parameters      |
-| 3    | NOT_FOUND         | Service or method not found |
-| 8    | INTERNAL          | Server-side error           |
-| 9    | UNAVAILABLE       | Connection failure          |
-| 10   | DEADLINE_EXCEEDED | Request timeout             |
 
 ## License
 

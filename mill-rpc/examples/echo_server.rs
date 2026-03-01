@@ -1,4 +1,4 @@
-//! Echo RPC server - returns whatever you send.
+//! Echo RPC server.
 //!
 //! Run with: cargo run --example echo_server
 //! Then connect with: cargo run --example echo_client
@@ -8,12 +8,14 @@ use mill_rpc::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-#[mill_rpc::service]
-trait Echo {
-    fn echo(message: String) -> String;
-    fn echo_uppercase(message: String) -> String;
-    fn echo_repeat(message: String, times: u32) -> String;
-    fn request_count() -> u64;
+mill_rpc::service! {
+    #[server]
+    service Echo {
+        fn echo(message: String) -> String;
+        fn echo_uppercase(message: String) -> String;
+        fn echo_repeat(message: String, times: u32) -> String;
+        fn request_count() -> u64;
+    }
 }
 
 struct EchoImpl {
@@ -28,7 +30,7 @@ impl EchoImpl {
     }
 }
 
-impl EchoServer for EchoImpl {
+impl echo::Service for EchoImpl {
     fn echo(&self, _ctx: &RpcContext, message: String) -> String {
         self.counter.fetch_add(1, Ordering::Relaxed);
         println!("  echo: {:?}", message);
@@ -63,7 +65,7 @@ fn main() {
     let addr = "127.0.0.1:9002".parse().unwrap();
     let _server = RpcServer::builder()
         .bind(addr)
-        .service(EchoDispatcher(EchoImpl::new()))
+        .service(echo::server(EchoImpl::new()))
         .build(&event_loop)
         .expect("Failed to start echo server");
 

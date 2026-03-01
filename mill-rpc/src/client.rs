@@ -2,11 +2,11 @@
 //!
 //! Connects to an RPC server, sends request frames, and waits for responses.
 
-use crate::{Codec, RpcError, RpcStatus, RpcTransport};
+use crate::{RpcError, RpcTransport};
 use mill_io::EventLoop;
 use mill_net::tcp::traits::{ConnectionId, NetworkHandler};
 use mill_net::tcp::{ServerContext, TcpClient};
-use mill_rpc_core::protocol::{self, Frame, MessageType, HEADER_SIZE};
+use mill_rpc_core::protocol::{self, Frame, MessageType};
 use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -35,7 +35,6 @@ pub struct RpcClient {
     tcp_client: Mutex<TcpClient<RpcClientHandler>>,
     shared: Arc<ClientShared>,
     next_request_id: AtomicU64,
-    codec: Codec,
     timeout: Duration,
 }
 
@@ -44,7 +43,6 @@ impl RpcClient {
     pub fn connect(
         addr: SocketAddr,
         event_loop: &Arc<EventLoop>,
-        codec: Codec,
     ) -> Result<Arc<Self>, RpcError> {
         let shared = Arc::new(ClientShared {
             pending: Mutex::new(HashMap::new()),
@@ -67,7 +65,6 @@ impl RpcClient {
             tcp_client: Mutex::new(tcp_client),
             shared,
             next_request_id: AtomicU64::new(1),
-            codec,
             timeout: Duration::from_secs(30),
         }))
     }
@@ -98,7 +95,6 @@ impl RpcClient {
             );
         }
 
-        // Build and send the request frame.
         let frame = Frame::request(request_id, service_id, method_id, payload, false);
         {
             let client = self.tcp_client.lock().unwrap();
@@ -107,7 +103,6 @@ impl RpcClient {
                 .map_err(|e| RpcError::unavailable(format!("Send failed: {}", e)))?;
         }
 
-        // Wait for the response with timeout.
         let mut pending = self.shared.pending.lock().unwrap();
         let deadline = std::time::Instant::now() + self.timeout;
 

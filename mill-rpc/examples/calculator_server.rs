@@ -7,18 +7,21 @@ use mill_io::EventLoop;
 use mill_rpc::prelude::*;
 use std::sync::Arc;
 
-#[mill_rpc::service]
-trait Calculator {
-    fn add(a: i32, b: i32) -> i32;
-    fn subtract(a: i32, b: i32) -> i32;
-    fn multiply(a: i64, b: i64) -> i64;
-    fn divide(a: f64, b: f64) -> f64;
-    fn negate(x: i32) -> i32;
+// Define the service — only generate server side
+mill_rpc::service! {
+    #[server]
+    service Calculator {
+        fn add(a: i32, b: i32) -> i32;
+        fn subtract(a: i32, b: i32) -> i32;
+        fn multiply(a: i64, b: i64) -> i64;
+        fn divide(a: f64, b: f64) -> f64;
+        fn negate(x: i32) -> i32;
+    }
 }
 
-struct CalculatorImpl;
+struct MyCalculator;
 
-impl CalculatorServer for CalculatorImpl {
+impl calculator::Service for MyCalculator {
     fn add(&self, _ctx: &RpcContext, a: i32, b: i32) -> i32 {
         println!("  add({}, {}) = {}", a, b, a + b);
         a + b
@@ -53,7 +56,7 @@ fn main() {
     let addr = "127.0.0.1:9001".parse().unwrap();
     let _server = RpcServer::builder()
         .bind(addr)
-        .service(CalculatorDispatcher(CalculatorImpl))
+        .service(calculator::server(MyCalculator))
         .build(&event_loop)
         .expect("Failed to start calculator server");
 

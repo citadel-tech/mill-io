@@ -9,7 +9,7 @@ use mill_net::errors::{NetworkError, Result};
 use mill_net::tcp::config::TcpServerConfig;
 use mill_net::tcp::traits::{ConnectionId, NetworkHandler};
 use mill_net::tcp::{ServerContext, TcpServer};
-use mill_rpc_core::protocol::{self, Frame, FrameHeader, MessageType, HEADER_SIZE};
+use mill_rpc_core::protocol::{self, Frame, MessageType};
 use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
