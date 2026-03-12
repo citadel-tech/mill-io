@@ -56,7 +56,7 @@ fn main() {
 ### Client
 
 ```rust
-let transport = RpcClient::connect(addr, &event_loop, Codec::bincode()).unwrap();
+let transport = RpcClient::connect(addr, &event_loop).unwrap();
 let client = calculator::Client::new(transport, Codec::bincode(), 0);
 
 let sum = client.add(10, 25).unwrap();     // 35

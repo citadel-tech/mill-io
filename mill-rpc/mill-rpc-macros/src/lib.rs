@@ -361,7 +361,8 @@ fn generate_service_module(def: ServiceDef) -> syn::Result<proc_macro2::TokenStr
 
     let output = quote! {
         pub mod #mod_name {
-            //! Auto-generated RPC module for the **#service_name_str** service.
+            #![allow(unused_imports)]
+            use super::*;
 
             /// Method ID constants.
             pub mod methods {
@@ -374,6 +375,7 @@ fn generate_service_module(def: ServiceDef) -> syn::Result<proc_macro2::TokenStr
 
             /// Internal request/response types (not part of the public API).
             mod types {
+                use super::super::*;
                 #( #type_defs )*
             }
 
