@@ -35,7 +35,7 @@ pub struct RpcClient {
     tcp_client: Mutex<TcpClient<RpcClientHandler>>,
     shared: Arc<ClientShared>,
     next_request_id: AtomicU64,
-    timeout: Duration,
+    timeout: AtomicU64,
 }
 
 impl RpcClient {
@@ -62,13 +62,18 @@ impl RpcClient {
             tcp_client: Mutex::new(tcp_client),
             shared,
             next_request_id: AtomicU64::new(1),
-            timeout: Duration::from_secs(30),
+            timeout: AtomicU64::new(30 * 1000),
         }))
     }
 
     /// Set the default timeout for RPC calls.
-    pub fn set_timeout(&mut self, timeout: Duration) {
-        self.timeout = timeout;
+    pub fn set_timeout(&self, timeout: Duration) {
+        self.timeout
+            .store(timeout.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout.load(Ordering::SeqCst))
     }
 
     /// Send a request and wait for a response (blocking).
@@ -93,15 +98,18 @@ impl RpcClient {
         }
 
         let frame = Frame::request(request_id, service_id, method_id, payload, false);
-        {
+        let send_result = {
             let client = self.tcp_client.lock().unwrap();
-            client
-                .send(&frame.encode())
-                .map_err(|e| RpcError::unavailable(format!("Send failed: {}", e)))?;
+            client.send(&frame.encode())
+        };
+        if let Err(e) = send_result {
+            let mut pending = self.shared.pending.lock().unwrap();
+            pending.remove(&request_id);
+            return Err(RpcError::unavailable(format!("Send failed: {}", e)));
         }
 
         let mut pending = self.shared.pending.lock().unwrap();
-        let deadline = std::time::Instant::now() + self.timeout;
+        let deadline = std::time::Instant::now() + self.timeout();
 
         loop {
             if let Some(req) = pending.get(&request_id) {
