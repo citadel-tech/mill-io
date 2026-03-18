@@ -1,0 +1,63 @@
+[package]
+name = "mill-rpc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "An Axum-inspired RPC framework built on Mill-IO"
+
+[dependencies]
+mill-rpc-core = { path = "mill-rpc-core" }
+mill-rpc-macros = { path = "mill-rpc-macros" }
+mill-io = { path = "../mill-io" }
+mill-net = { path = "../mill-net" }
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+log = "0.4"
+mio = { version = "1", features = ["os-poll", "net"] }
+
+[dev-dependencies]
+env_logger = "0.11"
+criterion = { version = "0.5", features = ["html_reports"] }
+serde_cbor = "0.11"
+
+[[example]]
+name = "calculator_server"
+path = "examples/calculator_server.rs"
+
+[[example]]
+name = "calculator_client"
+path = "examples/calculator_client.rs"
+
+[[example]]
+name = "echo_server"
+path = "examples/echo_server.rs"
+
+[[example]]
+name = "echo_client"
+path = "examples/echo_client.rs"
+
+[[example]]
+name = "kv_server"
+path = "examples/kv_server.rs"
+
+[[example]]
+name = "kv_client"
+path = "examples/kv_client.rs"
+
+[[example]]
+name = "multi_service_server"
+path = "examples/multi_service_server.rs"
+
+[[example]]
+name = "multi_service_client"
+path = "examples/multi_service_client.rs"
+
+[[example]]
+name = "concurrent_clients"
+path = "examples/concurrent_clients.rs"
+
+[[bench]]
+name = "rpc_comparison"
+harness = false

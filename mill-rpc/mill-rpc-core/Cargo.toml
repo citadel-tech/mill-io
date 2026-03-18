@@ -1,0 +1,12 @@
+[package]
+name = "mill-rpc-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Core types, wire protocol, and codec traits for Mill-RPC"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = "1"

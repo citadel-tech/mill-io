@@ -1,5 +1,11 @@
 [workspace]
-members = ["mill-io", "mill-net"]
+members = [
+    "mill-io",
+    "mill-net",
+    "mill-rpc",
+    "mill-rpc/mill-rpc-core",
+    "mill-rpc/mill-rpc-macros",
+]
 resolver = "2"
 
 [workspace.package]
