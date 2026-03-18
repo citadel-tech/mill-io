@@ -6,12 +6,18 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "An Axum-inspired RPC framework built on Mill-IO"
+documentation = "https://docs.rs/mill-rpc"
+homepage = "https://github.com/citadel-tech/mill-io"
+repository = "https://github.com/citadel-tech/mill-io"
+readme = "README.md"
+keywords = ["rpc", "mill-io", "event-loop", "networking", "services"]
+categories = ["network-programming", "asynchronous"]
 
 [dependencies]
-mill-rpc-core = { path = "mill-rpc-core" }
-mill-rpc-macros = { path = "mill-rpc-macros" }
-mill-io = { path = "../mill-io" }
-mill-net = { path = "../mill-net" }
+mill-rpc-core = { path = "mill-rpc-core", version = "3.0.0" }
+mill-rpc-macros = { path = "mill-rpc-macros", version = "3.0.0" }
+mill-io = { path = "../mill-io", version = "3.0.0" }
+mill-net = { path = "../mill-net", version = "3.0.0" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 log = "0.4"

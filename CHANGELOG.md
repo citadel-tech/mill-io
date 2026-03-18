@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-03-18
+
+### Added
+
+- **mill-net**: New crate providing high-level TCP networking built on mill-io's event loop (#81)
+  - Lockfree connection management with atomic `ConnectionId` assignment
+  - `NetworkHandler` trait with event callbacks (`on_connect`, `on_data`, `on_disconnect`, `on_writable`, `on_error`)
+  - `TcpServer` and `TcpClient` with builder-pattern `TcpServerConfig` (buffer size, max connections, TCP_NODELAY, SO_KEEPALIVE)
+  - `ServerContext` for sending data and managing connections from handler callbacks
+  - No async runtime required — handler-based non-blocking I/O on top of epoll/kqueue/IOCP
+- **mill-rpc**: New Axum-inspired RPC framework built on mill-io and mill-net (#85)
+  - `mill_rpc::service!` macro for declarative service definitions with generated server traits, client structs, and dispatch logic
+  - Selective code generation with `#[server]` and `#[client]` attributes
+  - Multi-service hosting on a single port with automatic routing
+  - Binary wire protocol with efficient framing, one-way calls, and ping/pong
+  - Pluggable codec system (Bincode by default)
+  - `RpcServer::builder()` and `RpcClient::connect()` APIs
+- **mill-io**: Direct dispatching with low latency mode for latency-sensitive workloads (#83)
+- Benchmarking suite for mill-io, mill-net, and mill-rpc (#82)
+
+### Changed
+
+- Split the monolithic crate into `mill-io` and `mill-net` as individual publishable crates (#81)
+- Use `parking_lot` for minimal `Mutex` overhead across all crates (#84)
+- Added crates.io publishing metadata (documentation, homepage, repository, readme, keywords) to all crates
+
+### Fixed
+
+- Replace `lockfree` with `lock_freedom` for soundness (#80)
+- Update architecture diagrams to use consistent ASCII characters (#79)
+
 ## [2.0.1] - 2025-12-30
 
 

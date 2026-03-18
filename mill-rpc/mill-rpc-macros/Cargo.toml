@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "Proc macros for Mill-RPC service definitions"
+documentation = "https://docs.rs/mill-rpc-macros"
+homepage = "https://github.com/citadel-tech/mill-io"
+repository = "https://github.com/citadel-tech/mill-io"
+readme = "../README.md"
+keywords = ["rpc", "mill-io", "macros", "proc-macro", "codegen"]
+categories = ["network-programming"]
 
 [lib]
 proc-macro = true
