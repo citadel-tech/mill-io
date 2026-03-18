@@ -331,14 +331,13 @@ impl ComputeThreadPool {
             sequence,
         };
 
-        self.metrics.tasks_submitted.fetch_add(1, Ordering::Relaxed);
-
         {
             let mut queue = self.state.queue.lock();
             queue.push(priority_task);
 
-            // Increment queue depth inside the lock so the metric is consistent
-            // with the actual queue state.
+            // All metric updates inside the lock so a reader never sees
+            // tasks_submitted > sum(queue_depths) + completed + failed.
+            self.metrics.tasks_submitted.fetch_add(1, Ordering::Relaxed);
             match priority {
                 TaskPriority::Low => self.metrics.queue_depth_low.fetch_add(1, Ordering::Relaxed),
                 TaskPriority::Normal => self
