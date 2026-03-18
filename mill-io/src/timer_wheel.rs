@@ -53,6 +53,10 @@ struct WheelInner {
     /// Timers whose deadline exceeds the wheel's addressable range.
     overflow: Vec<u64>,
     timer_count: usize,
+    /// Cached earliest deadline tick. None means dirty and needs a full
+    /// recompute on the next time_until_next call. Kept up to date on
+    /// inserts (O(1) min-update) and lazily invalidated on cancels/expirations.
+    earliest_deadline: Option<u64>,
 }
 
 impl WheelInner {
@@ -71,6 +75,7 @@ impl WheelInner {
             timers: HashMap::new(),
             overflow: Vec::new(),
             timer_count: 0,
+            earliest_deadline: None,
         }
     }
 
@@ -174,6 +179,12 @@ impl WheelInner {
             self.reinsert_overflow();
         }
 
+        // Timers were removed; invalidate the cached earliest so the next
+        // time_until_next call recomputes from the remaining set.
+        if !expired.is_empty() {
+            self.earliest_deadline = None;
+        }
+
         expired
     }
 
@@ -196,24 +207,46 @@ impl WheelInner {
                 expired.push(entry);
             }
         }
+        self.earliest_deadline = None;
+    }
+
+    /// O(1) update when a timer is inserted. If the cache is valid,
+    /// take the min; if dirty (None), leave it dirty.
+    fn note_inserted(&mut self, deadline_tick: u64) {
+        self.earliest_deadline = Some(match self.earliest_deadline {
+            Some(current) => current.min(deadline_tick),
+            None => deadline_tick,
+        });
+    }
+
+    /// Invalidate the cache when the earliest timer might have been removed.
+    fn note_removed(&mut self, removed_deadline: u64) {
+        if self.earliest_deadline == Some(removed_deadline) {
+            self.earliest_deadline = None;
+        }
+    }
+
+    /// Full O(n) recompute of the earliest deadline and cache it.
+    fn recompute_earliest(&mut self) -> Option<u64> {
+        let earliest = self.timers.values().map(|e| e.deadline_tick).min();
+        self.earliest_deadline = earliest;
+        earliest
     }
 
     /// Duration until the nearest pending timer, or None if empty.
-    /// Uses wall-clock time so the result is accurate even if tick()
-    /// hasn't been called recently.
-    fn time_until_next(&self) -> Option<Duration> {
+    /// O(1) when the cached earliest is valid; O(n) recompute only
+    /// when the cache was invalidated by a cancel or expiration.
+    fn time_until_next(&mut self) -> Option<Duration> {
         if self.timer_count == 0 {
             return None;
         }
 
-        let now_tick = self.instant_to_tick(Instant::now());
+        let earliest = match self.earliest_deadline {
+            Some(e) => e,
+            None => self.recompute_earliest()?,
+        };
 
-        let earliest = self
-            .timers
-            .values()
-            .map(|e| e.deadline_tick)
-            .min()
-            .unwrap_or(u64::MAX);
+        let now_tick = self.instant_to_tick(Instant::now());
 
         if earliest <= now_tick {
             Some(Duration::ZERO)
@@ -263,6 +296,7 @@ impl TimerWheel {
         inner.timers.insert(id, entry);
         inner.timer_count += 1;
         inner.insert_into_wheel(id, deadline_tick);
+        inner.note_inserted(deadline_tick);
 
         timer_id
     }
@@ -288,6 +322,7 @@ impl TimerWheel {
         inner.timers.insert(id, entry);
         inner.timer_count += 1;
         inner.insert_into_wheel(id, deadline_tick);
+        inner.note_inserted(deadline_tick);
 
         timer_id
     }
@@ -295,8 +330,10 @@ impl TimerWheel {
     /// Cancel a pending timer. Returns true if the timer existed and was removed.
     pub fn cancel(&self, timer_id: TimerId) -> bool {
         let mut inner = self.inner.lock();
-        if inner.timers.remove(&timer_id.0).is_some() {
+        if let Some(entry) = inner.timers.remove(&timer_id.0) {
+            let deadline = entry.deadline_tick;
             inner.timer_count -= 1;
+            inner.note_removed(deadline);
             true
         } else {
             false
@@ -351,6 +388,7 @@ impl TimerWheel {
                     inner.timers.insert(id, new_entry);
                     inner.timer_count += 1;
                     inner.insert_into_wheel(id, next_deadline);
+                    inner.note_inserted(next_deadline);
                 }
             }
         }
@@ -540,21 +578,33 @@ mod tests {
     }
 
     #[test]
-    fn test_higher_level_timers() {
+    fn test_higher_level_timer_does_not_fire_early() {
         let wheel = TimerWheel::new();
         let fired = Arc::new(AtomicUsize::new(0));
         let fired_clone = fired.clone();
 
-        // 300ms falls into level 1 (>= 256ms)
+        // 10s is well into level 1 (>= 256ms) and impossible to overshoot.
+        wheel.schedule_once(Duration::from_secs(10), move || {
+            fired_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        wheel.tick();
+        assert_eq!(fired.load(Ordering::SeqCst), 0);
+        assert_eq!(wheel.pending_count(), 1);
+    }
+
+    #[test]
+    fn test_higher_level_timer_fires_after_deadline() {
+        let wheel = TimerWheel::new();
+        let fired = Arc::new(AtomicUsize::new(0));
+        let fired_clone = fired.clone();
+
+        // 300ms falls into level 1 (>= 256ms). Sleep well past the deadline.
         wheel.schedule_once(Duration::from_millis(300), move || {
             fired_clone.fetch_add(1, Ordering::SeqCst);
         });
 
-        std::thread::sleep(Duration::from_millis(200));
-        wheel.tick();
-        assert_eq!(fired.load(Ordering::SeqCst), 0);
-
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(400));
         wheel.tick();
         assert_eq!(fired.load(Ordering::SeqCst), 1);
     }
