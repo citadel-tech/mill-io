@@ -340,16 +340,15 @@ impl ComputeThreadPool {
             // Increment queue depth inside the lock so the metric is consistent
             // with the actual queue state.
             match priority {
-                TaskPriority::Low => {
-                    self.metrics.queue_depth_low.fetch_add(1, Ordering::Relaxed)
-                }
+                TaskPriority::Low => self.metrics.queue_depth_low.fetch_add(1, Ordering::Relaxed),
                 TaskPriority::Normal => self
                     .metrics
                     .queue_depth_normal
                     .fetch_add(1, Ordering::Relaxed),
-                TaskPriority::High => {
-                    self.metrics.queue_depth_high.fetch_add(1, Ordering::Relaxed)
-                }
+                TaskPriority::High => self
+                    .metrics
+                    .queue_depth_high
+                    .fetch_add(1, Ordering::Relaxed),
                 TaskPriority::Critical => self
                     .metrics
                     .queue_depth_critical
@@ -565,10 +564,7 @@ mod tests {
         let d = done.clone();
 
         // First task panics.
-        pool.spawn(
-            move || panic!("intentional panic"),
-            TaskPriority::Normal,
-        );
+        pool.spawn(move || panic!("intentional panic"), TaskPriority::Normal);
 
         // Second task runs after the panic to prove the worker survived.
         pool.spawn(
@@ -625,7 +621,10 @@ mod tests {
         pool.spawn(move || panic!("boom"), TaskPriority::High);
 
         let r1 = result.clone();
-        pool.spawn(move || r1.lock().unwrap().push("normal"), TaskPriority::Normal);
+        pool.spawn(
+            move || r1.lock().unwrap().push("normal"),
+            TaskPriority::Normal,
+        );
 
         let r2 = result.clone();
         pool.spawn(move || r2.lock().unwrap().push("low"), TaskPriority::Low);
@@ -724,10 +723,7 @@ mod tests {
             TaskPriority::Critical,
         );
         let o2 = order.clone();
-        pool.spawn(
-            move || o2.lock().unwrap().push("low"),
-            TaskPriority::Low,
-        );
+        pool.spawn(move || o2.lock().unwrap().push("low"), TaskPriority::Low);
 
         release.wait();
 
@@ -759,8 +755,18 @@ mod tests {
         let b2 = barrier.clone();
 
         // Occupy both workers so subsequent tasks stay queued.
-        pool.spawn(move || { b1.wait(); }, TaskPriority::Normal);
-        pool.spawn(move || { b2.wait(); }, TaskPriority::Normal);
+        pool.spawn(
+            move || {
+                b1.wait();
+            },
+            TaskPriority::Normal,
+        );
+        pool.spawn(
+            move || {
+                b2.wait();
+            },
+            TaskPriority::Normal,
+        );
 
         // Give workers time to pick up tasks and increment active_workers.
         std::thread::sleep(Duration::from_millis(50));
