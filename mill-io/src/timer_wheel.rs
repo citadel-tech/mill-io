@@ -479,7 +479,8 @@ mod tests {
         let fired = Arc::new(AtomicUsize::new(0));
         let fired_clone = fired.clone();
 
-        wheel.schedule_once(Duration::from_millis(100), move || {
+        // Use a large deadline so no amount of CI load can cause an overshoot.
+        wheel.schedule_once(Duration::from_secs(10), move || {
             fired_clone.fetch_add(1, Ordering::SeqCst);
         });
 
@@ -489,6 +490,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         wheel.tick();
         assert_eq!(fired.load(Ordering::SeqCst), 0);
+        assert_eq!(wheel.pending_count(), 1);
     }
 
     #[test]
