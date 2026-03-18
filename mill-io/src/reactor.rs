@@ -99,10 +99,9 @@ impl Reactor {
                 None => Duration::from_millis(self.poll_timeout_ms),
             };
 
-            let _ = self.poll_handle.poll(
-                &mut self.events.write().unwrap(),
-                Some(poll_timeout),
-            )?;
+            let _ = self
+                .poll_handle
+                .poll(&mut self.events.write().unwrap(), Some(poll_timeout))?;
 
             for event in self.events.read().unwrap().iter() {
                 self.dispatch_event(event.clone())?;

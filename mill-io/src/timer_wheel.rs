@@ -97,8 +97,8 @@ impl WheelInner {
     /// Find the lowest wheel level whose span covers `delta` ticks.
     fn level_for_delta(&self, delta: u64) -> usize {
         let mut cumulative_bits = 0u32;
-        for level in 0..NUM_LEVELS {
-            cumulative_bits += LEVEL_BITS[level];
+        for (level, &bits) in LEVEL_BITS.iter().enumerate() {
+            cumulative_bits += bits;
             if delta < (1u64 << cumulative_bits) {
                 return level;
             }
@@ -160,13 +160,13 @@ impl WheelInner {
 
             // Cascade from higher levels when lower levels wrap.
             let mut shift_acc = LEVEL_BITS[0];
-            for level in 1..NUM_LEVELS {
+            for (level, &bits) in LEVEL_BITS.iter().enumerate().skip(1) {
                 if (self.current_tick & ((1u64 << shift_acc) - 1)) == 0 {
                     self.cascade(level);
                 } else {
                     break;
                 }
-                shift_acc += LEVEL_BITS[level];
+                shift_acc += bits;
             }
         }
 
@@ -179,8 +179,8 @@ impl WheelInner {
 
     /// Drain every timer from every slot and overflow (used for large time jumps).
     fn drain_all_into(&mut self, expired: &mut Vec<TimerEntry>) {
-        for level in 0..NUM_LEVELS {
-            for slot in self.levels[level].iter_mut() {
+        for level in &mut self.levels {
+            for slot in level.iter_mut() {
                 for id in slot.drain(..) {
                     if let Some(entry) = self.timers.remove(&id) {
                         self.timer_count -= 1;

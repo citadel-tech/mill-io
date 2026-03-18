@@ -496,7 +496,10 @@ impl EventLoop {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let id = self.reactor.timer_wheel.schedule_repeating(interval, callback);
+        let id = self
+            .reactor
+            .timer_wheel
+            .schedule_repeating(interval, callback);
         let _ = self.reactor.poll_handle.wake();
         id
     }
