@@ -2,6 +2,7 @@ use crate::{
     error::Result,
     poll::PollHandle,
     thread_pool::{ComputePoolMetrics, ComputeThreadPool, TaskPriority, ThreadPool},
+    timer_wheel::TimerWheel,
 };
 use mio::{event::Event, Events};
 use std::{
@@ -27,6 +28,7 @@ pub struct Reactor {
     running: AtomicBool,
     poll_timeout_ms: u64,
     options: ReactorOptions,
+    pub(crate) timer_wheel: Arc<TimerWheel>,
 }
 
 impl Default for Reactor {
@@ -45,6 +47,7 @@ impl Default for Reactor {
             options: ReactorOptions {
                 direct_dispatch: false,
             },
+            timer_wheel: Arc::new(TimerWheel::new()),
         }
     }
 }
@@ -61,6 +64,7 @@ impl Reactor {
             options: ReactorOptions {
                 direct_dispatch: false,
             },
+            timer_wheel: Arc::new(TimerWheel::new()),
         })
     }
 
@@ -78,6 +82,7 @@ impl Reactor {
             running: AtomicBool::new(false),
             poll_timeout_ms,
             options,
+            timer_wheel: Arc::new(TimerWheel::new()),
         })
     }
 
@@ -85,14 +90,25 @@ impl Reactor {
         self.running.store(true, Ordering::SeqCst);
 
         while self.running.load(Ordering::SeqCst) {
-            let _ = self.poll_handle.poll(
-                &mut self.events.write().unwrap(),
-                Some(Duration::from_millis(self.poll_timeout_ms)),
-            )?;
+            // Shorten the poll timeout if a timer is due soon.
+            let poll_timeout = match self.timer_wheel.time_until_next() {
+                Some(until_next) => {
+                    let configured = Duration::from_millis(self.poll_timeout_ms);
+                    until_next.min(configured)
+                }
+                None => Duration::from_millis(self.poll_timeout_ms),
+            };
+
+            let _ = self
+                .poll_handle
+                .poll(&mut self.events.write().unwrap(), Some(poll_timeout))?;
 
             for event in self.events.read().unwrap().iter() {
                 self.dispatch_event(event.clone())?;
             }
+
+            // Advance the timer wheel and fire expired timers.
+            self.timer_wheel.tick();
         }
         Ok(())
     }

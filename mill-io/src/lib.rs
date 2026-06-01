@@ -101,13 +101,16 @@ pub mod object_pool;
 pub mod poll;
 pub mod reactor;
 pub mod thread_pool;
+pub mod timer_wheel;
 
 pub use handler::EventHandler;
 pub use mio::event::Event;
 pub use object_pool::{ObjectPool, PooledObject};
 pub use thread_pool::{ComputePoolMetrics, TaskPriority};
+pub use timer_wheel::TimerId;
 
 use crate::{error::Result, reactor::ReactorOptions};
+use std::time::Duration;
 
 /// A convenient prelude module that re-exports commonly used types and traits.
 ///
@@ -127,6 +130,7 @@ pub mod prelude {
     pub use crate::object_pool::{ObjectPool, PooledObject};
     pub use crate::reactor::{self, Reactor};
     pub use crate::thread_pool::{self, ComputePoolMetrics, TaskPriority, ThreadPool};
+    pub use crate::timer_wheel::{TimerId, TimerWheel};
 }
 
 /// The main event loop structure for registering I/O sources and handling events.
@@ -448,19 +452,88 @@ impl EventLoop {
         self.reactor.get_compute_metrics()
     }
 
+    /// Schedule a one-shot timer that fires after `delay`.
+    ///
+    /// The callback runs on the reactor thread during timer processing.
+    /// Keep callbacks fast to avoid blocking the event loop.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,no_run
+    /// use mill_io::EventLoop;
+    /// use std::time::Duration;
+    ///
+    /// let event_loop = EventLoop::default();
+    /// let timer_id = event_loop.schedule_once(Duration::from_secs(5), || {
+    ///     println!("Timer fired!");
+    /// });
+    /// ```
+    pub fn schedule_once<F>(&self, delay: Duration, callback: F) -> TimerId
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let id = self.reactor.timer_wheel.schedule_once(delay, callback);
+        // Wake the reactor so it can recalculate its poll timeout.
+        let _ = self.reactor.poll_handle.wake();
+        id
+    }
+
+    /// Schedule a repeating timer that fires every `interval`.
+    /// The first firing happens after one `interval` elapses.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,no_run
+    /// use mill_io::EventLoop;
+    /// use std::time::Duration;
+    ///
+    /// let event_loop = EventLoop::default();
+    /// let timer_id = event_loop.schedule_repeating(Duration::from_secs(1), || {
+    ///     println!("Tick!");
+    /// });
+    /// ```
+    pub fn schedule_repeating<F>(&self, interval: Duration, callback: F) -> TimerId
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        let id = self
+            .reactor
+            .timer_wheel
+            .schedule_repeating(interval, callback);
+        let _ = self.reactor.poll_handle.wake();
+        id
+    }
+
+    /// Cancel a pending timer. Returns true if the timer was found and cancelled.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,no_run
+    /// use mill_io::EventLoop;
+    /// use std::time::Duration;
+    ///
+    /// let event_loop = EventLoop::default();
+    /// let timer_id = event_loop.schedule_once(Duration::from_secs(10), || {});
+    /// event_loop.cancel_timer(timer_id);
+    /// ```
+    pub fn cancel_timer(&self, timer_id: TimerId) -> bool {
+        self.reactor.timer_wheel.cancel(timer_id)
+    }
+
+    /// Returns the number of currently scheduled timers.
+    pub fn pending_timers(&self) -> usize {
+        self.reactor.timer_wheel.pending_count()
+    }
+
     /// Signals the event loop to stop gracefully.
     ///
-    /// This method initiates a graceful shutdown of the event loop. It sends a shutdown
-    /// signal to the reactor, which will cause the main loop to exit after finishing
-    /// the current polling cycle.
+    /// Sends a shutdown signal to the reactor, which will cause the main loop
+    /// to exit after finishing the current polling cycle.
     ///
     /// This method is non-blocking and returns immediately. The actual shutdown happens
     /// asynchronously, and [`run()`](Self::run) will return once the shutdown is complete.
     ///
-    /// # Thread Safety
-    ///
-    /// This method is thread-safe and can be called from any thread, making it suitable
-    /// for use in signal handlers or from other threads.
+    /// Thread-safe: can be called from any thread.
     ///
     /// ## Example
     ///
