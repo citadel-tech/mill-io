@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -52,11 +52,21 @@ struct WheelInner {
     timers: HashMap<u64, TimerEntry>,
     /// Timers whose deadline exceeds the wheel's addressable range.
     overflow: Vec<u64>,
+    /// Smallest deadline tick currently sitting in `overflow`. Lets `tick`
+    /// skip the O(n) overflow rescan until the cursor is close enough that at
+    /// least one overflow timer can move into the wheel. None means empty.
+    overflow_min_deadline: Option<u64>,
     timer_count: usize,
     /// Cached earliest deadline tick. None means dirty and needs a full
     /// recompute on the next time_until_next call. Kept up to date on
     /// inserts (O(1) min-update) and lazily invalidated on cancels/expirations.
     earliest_deadline: Option<u64>,
+    /// Repeating timers whose callback is currently running (removed from
+    /// `timers` for the duration). Lets `cancel` see a timer that is mid-fire.
+    in_flight: HashSet<u64>,
+    /// In-flight repeating timers that were cancelled during their callback
+    /// window, so the reschedule step knows to drop them instead of re-arming.
+    canceled_in_flight: HashSet<u64>,
 }
 
 impl WheelInner {
@@ -74,8 +84,11 @@ impl WheelInner {
             start_time: Instant::now(),
             timers: HashMap::new(),
             overflow: Vec::new(),
+            overflow_min_deadline: None,
             timer_count: 0,
             earliest_deadline: None,
+            in_flight: HashSet::new(),
+            canceled_in_flight: HashSet::new(),
         }
     }
 
@@ -91,6 +104,10 @@ impl WheelInner {
 
         if delta >= MAX_RANGE_TICKS {
             self.overflow.push(id);
+            self.overflow_min_deadline = Some(
+                self.overflow_min_deadline
+                    .map_or(deadline_tick, |d| d.min(deadline_tick)),
+            );
             return;
         }
 
@@ -127,6 +144,8 @@ impl WheelInner {
     /// Move overflow timers into the wheel if they are now within range.
     fn reinsert_overflow(&mut self) {
         let overflow = std::mem::take(&mut self.overflow);
+        // insert_into_wheel rebuilds this for any timer still out of range.
+        self.overflow_min_deadline = None;
         for id in overflow {
             if let Some(entry) = self.timers.get(&id) {
                 let deadline = entry.deadline_tick;
@@ -141,11 +160,10 @@ impl WheelInner {
         let mut expired = Vec::new();
 
         // If the time jump is larger than the wheel can represent (e.g. after
-        // a long suspend), drain everything instead of iterating tick-by-tick.
-        if target_tick > self.current_tick + MAX_RANGE_TICKS {
-            self.drain_all_into(&mut expired);
-            self.current_tick = target_tick;
-            self.reinsert_overflow();
+        // a long suspend), fire only the timers that are actually due and keep
+        // the rest, instead of iterating tick-by-tick.
+        if target_tick > self.current_tick.saturating_add(MAX_RANGE_TICKS) {
+            self.drain_due_into(target_tick, &mut expired);
             return expired;
         }
 
@@ -175,7 +193,12 @@ impl WheelInner {
             }
         }
 
-        if !self.overflow.is_empty() {
+        // Only rescan overflow once the cursor is close enough that at least
+        // one overflow timer can now fit in the wheel's addressable range.
+        if self
+            .overflow_min_deadline
+            .is_some_and(|d| d.saturating_sub(self.current_tick) < MAX_RANGE_TICKS)
+        {
             self.reinsert_overflow();
         }
 
@@ -188,35 +211,52 @@ impl WheelInner {
         expired
     }
 
-    /// Drain every timer from every slot and overflow (used for large time jumps).
-    fn drain_all_into(&mut self, expired: &mut Vec<TimerEntry>) {
+    /// Handle a time jump beyond the wheel's range: fire only the timers due at
+    /// or before `target_tick`, and reinsert the rest relative to the new tick.
+    /// Avoids prematurely expiring far-future (overflow) timers.
+    fn drain_due_into(&mut self, target_tick: u64, expired: &mut Vec<TimerEntry>) {
+        // Pull every live timer id out of the wheel slots and overflow.
+        let mut ids = Vec::new();
         for level in &mut self.levels {
             for slot in level.iter_mut() {
-                for id in slot.drain(..) {
-                    if let Some(entry) = self.timers.remove(&id) {
-                        self.timer_count -= 1;
-                        expired.push(entry);
-                    }
+                ids.append(slot);
+            }
+        }
+        ids.append(&mut self.overflow);
+        self.overflow_min_deadline = None;
+
+        // Advance the cursor first so survivors are reinserted into the right
+        // slots relative to the new current time.
+        self.current_tick = target_tick;
+
+        for id in ids {
+            let deadline = match self.timers.get(&id) {
+                Some(entry) => entry.deadline_tick,
+                None => continue, // stale id left by a cancel
+            };
+            if deadline <= target_tick {
+                if let Some(entry) = self.timers.remove(&id) {
+                    self.timer_count -= 1;
+                    expired.push(entry);
                 }
+            } else {
+                self.insert_into_wheel(id, deadline);
             }
         }
-        let overflow = std::mem::take(&mut self.overflow);
-        for id in overflow {
-            if let Some(entry) = self.timers.remove(&id) {
-                self.timer_count -= 1;
-                expired.push(entry);
-            }
-        }
+
         self.earliest_deadline = None;
     }
 
-    /// O(1) update when a timer is inserted. If the cache is valid,
-    /// take the min; if dirty (None), leave it dirty.
+    /// O(1) update when a timer is inserted. If the cache is valid, take the
+    /// min. If it is dirty (None) leave it dirty so the next time_until_next
+    /// recomputes — unless this is the only timer, in which case its deadline
+    /// is trivially the earliest. Called after `timer_count` is incremented.
     fn note_inserted(&mut self, deadline_tick: u64) {
-        self.earliest_deadline = Some(match self.earliest_deadline {
-            Some(current) => current.min(deadline_tick),
-            None => deadline_tick,
-        });
+        self.earliest_deadline = match self.earliest_deadline {
+            Some(current) => Some(current.min(deadline_tick)),
+            None if self.timer_count == 1 => Some(deadline_tick),
+            None => None,
+        };
     }
 
     /// Invalidate the cache when the earliest timer might have been removed.
@@ -335,6 +375,11 @@ impl TimerWheel {
             inner.timer_count -= 1;
             inner.note_removed(deadline);
             true
+        } else if inner.in_flight.contains(&timer_id.0) {
+            // A repeating timer mid-callback is temporarily absent from
+            // `timers`; record the cancel so it is not re-armed afterwards.
+            inner.canceled_in_flight.insert(timer_id.0);
+            true
         } else {
             false
         }
@@ -352,6 +397,21 @@ impl TimerWheel {
             let mut inner = self.inner.lock();
             inner.advance_to(now)
         };
+
+        if expired.is_empty() {
+            return;
+        }
+
+        // Mark repeating timers as in-flight so a cancel() landing while their
+        // callback runs (including a self-cancel) is not silently lost.
+        {
+            let mut inner = self.inner.lock();
+            for entry in &expired {
+                if matches!(entry.kind, TimerKind::Repeating(..)) {
+                    inner.in_flight.insert(entry.id.0);
+                }
+            }
+        }
 
         // Fire callbacks without holding the lock.
         let mut to_reschedule = Vec::new();
@@ -375,9 +435,14 @@ impl TimerWheel {
             let now_tick = inner.instant_to_tick(Instant::now());
 
             for entry in to_reschedule {
+                let id = entry.id.0;
+                inner.in_flight.remove(&id);
+                if inner.canceled_in_flight.remove(&id) {
+                    // Cancelled while its callback was running; drop it.
+                    continue;
+                }
                 if let TimerKind::Repeating(_, interval) = &entry.kind {
                     let next_deadline = now_tick + interval.as_millis() as u64;
-                    let id = entry.id.0;
 
                     let new_entry = TimerEntry {
                         id: entry.id,
@@ -509,6 +574,57 @@ mod tests {
         std::thread::sleep(Duration::from_millis(30));
         wheel.tick();
         assert_eq!(count.load(Ordering::SeqCst), after_first);
+    }
+
+    // Regression: a repeating timer that cancels itself from inside its own
+    // callback must not be rescheduled. It is removed from `timers` while the
+    // callback runs, so cancel has to recognize the in-flight id.
+    #[test]
+    fn test_repeating_timer_self_cancel_from_callback() {
+        let wheel = Arc::new(TimerWheel::new());
+        let count = Arc::new(AtomicUsize::new(0));
+        let id_slot: Arc<Mutex<Option<TimerId>>> = Arc::new(Mutex::new(None));
+
+        let w = wheel.clone();
+        let c = count.clone();
+        let slot = id_slot.clone();
+        let id = wheel.schedule_repeating(Duration::from_millis(5), move || {
+            c.fetch_add(1, Ordering::SeqCst);
+            if let Some(tid) = *slot.lock() {
+                w.cancel(tid);
+            }
+        });
+        *id_slot.lock() = Some(id);
+
+        std::thread::sleep(Duration::from_millis(10));
+        wheel.tick(); // fires once; callback cancels itself
+        std::thread::sleep(Duration::from_millis(10));
+        wheel.tick(); // must not fire again
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(wheel.pending_count(), 0);
+    }
+
+    // Regression: after the earliest timer is cancelled (dirtying the cache),
+    // inserting a *later* timer must not heal the cache to that later deadline
+    // and hide a remaining earlier one. time_until_next must reflect the real
+    // nearest deadline.
+    #[test]
+    fn test_insert_after_cancel_does_not_hide_earlier_timer() {
+        let wheel = TimerWheel::new();
+
+        let a = wheel.schedule_once(Duration::from_millis(100), || {});
+        wheel.schedule_once(Duration::from_millis(200), || {}); // b, the real nearest after cancel
+
+        wheel.cancel(a); // dirties the earliest-deadline cache
+        wheel.schedule_once(Duration::from_millis(500), || {}); // c, later than b
+
+        // Should report ~200ms (b), never ~500ms (c).
+        let next = wheel.time_until_next().expect("timers pending");
+        assert!(
+            next < Duration::from_millis(350),
+            "time_until_next returned {next:?}, expected < 350ms (the 200ms timer)"
+        );
     }
 
     #[test]
